@@ -1,5 +1,5 @@
-/* RDS Led óra 2020.12.02.
- * kell még bele: hőmérő, net, webkliens, ébresztő
+/* 
+ * RDS Led óra 2020.12.02.
  */
  
 #include <FastLED.h>
@@ -12,21 +12,10 @@ RTC_DS1307 rtc;
 #define NUM_LEDS 60
 CRGB leds[NUM_LEDS];
 int LDR_Pin = A3; // fénymérő
+int markesz = 0;
 // Create the MCP9808 temperature sensor object
 Adafruit_MCP9808 tempsensor = Adafruit_MCP9808();
-// forgókapcsoló
-/*
-#define outputA A1
-#define outputB A2
-#define gomb A3
-int counter = 0; 
-int aState;
-int aLastState;
-    */
-void setup() {
-  //pinMode (outputA,INPUT_PULLUP);
-  //pinMode (outputB,INPUT_PULLUP); 
-  //aLastState = digitalRead(outputA);  
+void setup() {  
   FastLED.addLeds<WS2812, LED_PIN, GRB>(leds, NUM_LEDS);  
   while (!Serial); // for Leonardo/Micro/Zero
   Serial.begin(9600);
@@ -71,39 +60,6 @@ while (Serial.available() > 0 ) {
       Serial.println();
     }
   }
-  // forgókapcsolós beállítás 
-  /*
-  aState = digitalRead(outputA); // Reads the "current" state of the outputA
-  // If the previous and the current state of the outputA are different, that means a Pulse has occured
-  Serial.print( 'aktuális:' );
-  //Serial.print( aState , DEC);
-  Serial.print(' utolso: ');
-  //Serial.print( aLastState , DEC);
-  Serial.println();*/
-  /*
-  //if (aState != aLastState){     
-  if ( 1 == 2 ){       
-    // If the outputB state is different to the outputA state, that means the encoder is rotating clockwise
-    if (digitalRead(outputB) != aState) { 
-      rtc.adjust(DateTime((word)now.year(),
-                          (byte)now.month(),
-                          (byte)now.day(),
-                          (byte)now.hour(),
-                          (byte)now.minute()+1, 
-                          (byte)now.second()));
-      //Serial.println('Plusz');
-    } else {
-      rtc.adjust(DateTime((word)now.year(),
-                          (byte)now.month(),
-                          (byte)now.day(),
-                          (byte)now.hour(),
-                          (byte)now.minute()-1, 
-                          (byte)now.second()));
-      //Serial.println('minusz');
-    }
-  } 
-  aLastState = aState; // Updates the previous state of the outputA with the current state    
-  */
   orakiir() ;
 }
 void orakiir() {
@@ -112,50 +68,26 @@ void orakiir() {
   int fenyny = analogRead( LDR_Pin ); 
   // idő beolvasás  
   DateTime now = rtc.now();     
-    
   int brightness = 32; // Initial brightness 255
-  //long feny = 32;
-  //double fgy = 10;
-  // automatikus fényerő állítás   
-  //fenyny = analogRead( LDR_Pin );
-  //feny = 1000;
-  //brightness = floor( feny / 6 );
-  //feny = fenyny * 65;
-  //fgy = sqrt( feny  ); 
-  //brightness = floor( fgy );
-  //
-  //feny = 100;
   brightness = floor( fenyny / 10 );  
   if ( brightness < 2 ) brightness = 2;
   if ( brightness > 255 ) brightness = 255;
-  /*
-  // idő kiírás teszthez
-  Serial.print(now.year(), DEC);
-  Serial.print('.');
-  Serial.print(now.month(), DEC);
-  Serial.print('.');
-  Serial.print(now.day(), DEC);
-  Serial.print(now.hour(), DEC);
-  Serial.print(':');
-  Serial.print(now.minute(), DEC);
-  Serial.print(':');
-  Serial.print(now.second(), DEC);
-  //Serial.println();
-  Serial.print(" fenyero ldr: ");
-  Serial.print( fenyny, DEC); 
-  //Serial.print(" fenyero gyok: ");
-  //Serial.print( fenyny, DEC);   
-  Serial.print(" fényerő digi: ");
-  Serial.print( brightness, DEC); 
-  Serial.print(" Temp: "); 
-  Serial.print(c, 4); Serial.print("*C "); 
-  Serial.println();
-  //*/  
   int perc = now.minute();
   int tperc = 0;
   int ora = now.hour();
   int tora = 0;
   int mp = now.second();    
+  // sietés visszaállítása
+  if ( markesz == 0 ) {
+    if ( ( ora == 1 ) and ( perc == 1 ) and ( mp == 8 ) ) {
+      rtc.adjust(DateTime( now.year(), now.month(), now.day(), now.hour(), now.minute(), now.second()-6)); 
+      markesz = 1;
+    }
+  } else {
+    if ( ( ora >= 1 ) and ( perc > 1 ) ) {
+      markesz = 0;
+    }
+  }  
   // kijelzó színének változtatása órák szerint
   int p = 106; int z = 90; int k = 205; // sky blue, SlateBlue
   if ( ora > 18 ) { p = 255;  z = 165;  k = 0; } // narancs 
@@ -190,22 +122,6 @@ void orakiir() {
     FastLED.show(); 
     delay(5000);    
   } else {
-    // idő kiírás teszthez
-    /*
-    Serial.print(now.year(), DEC);
-    Serial.print('.');
-    Serial.print(now.month(), DEC);
-    Serial.print('.');
-    Serial.print(now.day(), DEC);
-    Serial.print('.');   
-    Serial.print(' ');
-    Serial.print(now.hour(), DEC);
-    Serial.print(':');
-    Serial.print(now.minute(), DEC);
-    Serial.print(':');
-    Serial.print(now.second(), DEC);
-    Serial.println();    
-    */
     tora = floor( ora / 10 );
     ora = ora - ( tora * 10 );
     tperc = floor( perc / 10 );
@@ -225,7 +141,6 @@ void orakiir() {
     leds[45] = CRGB ( 0,0,0 );   
     FastLED.setBrightness(brightness);  
     FastLED.show(); 
-    //delay(100); 
   }
   tempsensor.shutdown_wake(1); // hőmérő kikapcsolása  
 }
@@ -273,5 +188,5 @@ void szamkiir(int kezdo, int szam, int r, int g, int b ) {
   if ( ( szam != 2 ) and ( szam != 11 ) ) {
     leds[kezdo + 12 ] = CRGB ( r, g, b ); 
     leds[kezdo + 13 ] = CRGB ( r, g, b ); 
-  } //*/
+  } 
 }
