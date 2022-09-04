@@ -6,6 +6,10 @@
 #include <Wire.h>
 #include "RTClib.h"
 #include "Adafruit_MCP9808.h"
+#include <SPI.h>
+#include <Ethernet.h>
+#include <EthernetUdp.h>
+#include <UnixTime.h>
 
 RTC_DS1307 rtc;
 #define LED_PIN  9
@@ -15,10 +19,36 @@ int LDR_Pin = A3; // fénymérő
 int markesz = 0;
 // Create the MCP9808 temperature sensor object
 Adafruit_MCP9808 tempsensor = Adafruit_MCP9808();
+
+byte mac[] = { 0xDE, 0xAD, 0xBE, 0xEF, 0xFE, 0xEE };
+unsigned int localPort = 8888;       // local port to listen for UDP packets
+const char timeServer[] = "time.nist.gov"; // time.nist.gov NTP server
+const int NTP_PACKET_SIZE = 48; // NTP time stamp is in the first 48 bytes of the message
+byte packetBuffer[NTP_PACKET_SIZE]; //buffer to hold incoming and outgoing packets
+// A UDP instance to let us send and receive packets over UDP
+EthernetUDP Udp;
+UnixTime stamp(2); // időzóna eltolódás
+
 void setup() {  
+  Ethernet.init(10);  // Most Arduino shields
   FastLED.addLeds<WS2812, LED_PIN, GRB>(leds, NUM_LEDS);  
   while (!Serial); // for Leonardo/Micro/Zero
   Serial.begin(9600);
+  // start Ethernet and UDP
+  if ( Ethernet.begin( mac ) == 0) {
+    Serial.println("Failed to configure Ethernet using DHCP");
+    // Check for Ethernet hardware present
+    if (Ethernet.hardwareStatus() == EthernetNoHardware) {
+      Serial.println("Ethernet shield was not found.  Sorry, can't run without hardware. :(");
+    } else if (Ethernet.linkStatus() == LinkOFF) {
+      Serial.println("Ethernet cable is not connected.");
+    }
+    // no point in carrying on, so do nothing forevermore:
+    while (true) {
+      delay(1);
+    }
+  }
+  Udp.begin(localPort);  
   if (! rtc.begin()) {
     Serial.println("Nincs meg az RTC");
     while (1);
@@ -33,18 +63,13 @@ void setup() {
     Serial.println("Couldn't find MCP9808! Check your connections and verify the address is correct.");
     while (1);
   }  
-  tempsensor.setResolution(2); // sets the resolution mode of reading, the modes are defined in the table bellow:
-  // Mode Resolution SampleTime
-  //  0    0.5°C       30 ms
-  //  1    0.25°C      65 ms
-  //  2    0.125°C     130 ms
-  //  3    0.0625°C    250 ms  
+  tempsensor.setResolution(2); // sets the resolution 2 0.125°C 130 ms
 }
 
 void loop() {
   // idő beolvasás  
   DateTime now = rtc.now();     
-while (Serial.available() > 0 ) {
+  while (Serial.available() > 0 ) {
     String str = Serial.readString();
     if (str.substring(0,2) =="20") {
     rtc.adjust(DateTime((word)(2000 + (str.substring( 2, 4).toInt())) , 
@@ -62,6 +87,7 @@ while (Serial.available() > 0 ) {
   }
   orakiir() ;
 }
+
 void orakiir() {
   tempsensor.wake();  // wake up, ready to read!
   float c = tempsensor.readTempC(); 
@@ -79,12 +105,26 @@ void orakiir() {
   int mp = now.second();    
   // sietés visszaállítása
   if ( markesz == 0 ) {
-    if ( ( ora == 1 ) and ( perc == 1 ) and ( mp == 8 ) ) {
-      rtc.adjust(DateTime( now.year(), now.month(), now.day(), now.hour(), now.minute(), now.second()-6)); 
-      markesz = 1;
+    if ( ( perc == 1 ) and ( mp == 30 ) ) { // ( ora == 3 ) and 
+      //rtc.adjust(DateTime( now.year(), now.month(), now.day(), now.hour(), now.minute(), now.second()-6)); 
+      sendNTPpacket(timeServer);
+      delay(1000);
+      if (Udp.parsePacket()) {
+        Udp.read(packetBuffer, NTP_PACKET_SIZE);
+        unsigned long highWord = word(packetBuffer[40], packetBuffer[41]);
+        unsigned long lowWord = word(packetBuffer[42], packetBuffer[43]);
+        unsigned long secsSince1900 = highWord << 16 | lowWord;
+        const unsigned long seventyYears = 2208988800UL;
+        unsigned long epoch = secsSince1900 - seventyYears;  
+        stamp.getDateTime(epoch);
+        rtc.adjust(DateTime( stamp.year, stamp.month, stamp.day, 
+                             stamp.hour, stamp.minute, stamp.second)); 
+        Ethernet.maintain();
+        markesz = 1;
+      }
     }
   } else {
-    if ( ( ora >= 1 ) and ( perc > 1 ) ) {
+    if ( perc > 5 ) { // ( ora >= 3 ) and (  )
       markesz = 0;
     }
   }  
@@ -189,4 +229,23 @@ void szamkiir(int kezdo, int szam, int r, int g, int b ) {
     leds[kezdo + 12 ] = CRGB ( r, g, b ); 
     leds[kezdo + 13 ] = CRGB ( r, g, b ); 
   } 
+}
+
+// send an NTP request to the time server at the given address
+void sendNTPpacket(const char * address) {
+  memset(packetBuffer, 0, NTP_PACKET_SIZE);
+  packetBuffer[0] = 0b11100011;   // LI, Version, Mode
+  packetBuffer[1] = 0;     // Stratum, or type of clock
+  packetBuffer[2] = 6;     // Polling Interval
+  packetBuffer[3] = 0xEC;  // Peer Clock Precision
+  // 8 bytes of zero for Root Delay & Root Dispersion
+  packetBuffer[12]  = 49;
+  packetBuffer[13]  = 0x4E;
+  packetBuffer[14]  = 49;
+  packetBuffer[15]  = 52;
+  // all NTP fields have been given values, now
+  // you can send a packet requesting a timestamp:
+  Udp.beginPacket(address, 123); // NTP requests are to port 123
+  Udp.write(packetBuffer, NTP_PACKET_SIZE);
+  Udp.endPacket();
 }
